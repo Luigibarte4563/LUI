@@ -1,0 +1,21 @@
+project:
+  name: lui
+
+scan:
+  depth: standard
+
+exclude:
+  - node_modules
+  - dist
+  - .git
+  - coverage
+  - tests
+  - lui-report.html
+  - lui-report.json
+  - SECURITY-REPORT.md
+  - .lui-last-scan.json
+  - .lui-baseline.json
+  - .luiignore
+
+policy:
+  fail_on: high

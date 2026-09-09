@@ -1,0 +1,34 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Lui own artifacts
+.lui-last-scan.json
+.lui-baseline.json
+.luiignore
+lui-report.html
+SECURITY-REPORT.md
+lui-report.json
+
+# Env / secrets
+.env
+.env.*
+credentials
+*.pem
+*.key
+*.p12
+*.pfx
+.htpasswd
+*.local
+
+# Test artifacts
+tests/fixtures/vulnerable-node/lui-report.html
+tests/fixtures/vulnerable-node/.luiignore
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

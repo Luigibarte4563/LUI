@@ -1,0 +1,46 @@
+{
+  "name": "lui-security",
+  "version": "0.1.0",
+  "description": "Agentic Security Auditor for Developers",
+  "main": "./dist/index.js",
+  "bin": {
+    "lui": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --forceExit",
+    "lint": "tsc --noEmit",
+    "start": "node dist/cli.js"
+  },
+  "keywords": [
+    "security",
+    "scanner",
+    "audit",
+    "devsecops",
+    "vulnerability",
+    "sast"
+  ],
+  "author": "Lui Security",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "cli-table3": "^0.6.5",
+    "commander": "^12.1.0",
+    "ora": "^5.4.1",
+    "semver": "^7.6.3",
+    "yaml": "^2.5.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.14.0",
+    "@types/semver": "^7.5.8",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

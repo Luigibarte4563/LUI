@@ -1,0 +1,11 @@
+version: '3'
+services:
+  app:
+    build: .
+    privileged: true
+    network_mode: host
+    environment:
+      - DB_PASSWORD=compose_secret
+      - API_KEY=compose_api_key_12345
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
