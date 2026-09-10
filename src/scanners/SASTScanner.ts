@@ -403,6 +403,9 @@ export class SASTScanner extends BaseScanner {
       [...(context.config.exclude as string[] || []), 'node_modules', 'vendor', 'dist', 'build', '.min.js', '.bundle.js']
     );
 
+    // Dynamic technology-adaptive rule selection: adjust rules based on detected stack
+    const activeRules = this.getRulesForTech(context);
+
     for (const filePath of files) {
       const content = this.getFileContent(context, filePath);
       if (!content) continue;
@@ -412,7 +415,7 @@ export class SASTScanner extends BaseScanner {
       if (this.isSelfSource(relPath)) continue;
       const fileLang = this.detectLanguage(filePath);
 
-      for (const rule of SAST_RULES) {
+      for (const rule of activeRules) {
         if (rule.languages.length > 0 && !rule.languages.includes(fileLang)) continue;
 
         const matches = content.matchAll(rule.pattern);
@@ -453,6 +456,126 @@ export class SASTScanner extends BaseScanner {
     }
 
     return findings;
+  }
+
+  private getRulesForTech(context: ScanContext): SASTRule[] {
+    const tech = context.project.technology;
+    const frameworks = tech.frameworks.map(f => f.toLowerCase());
+    const languages = tech.languages.map(l => l.toLowerCase());
+    const dynamicRules: SASTRule[] = [];
+
+    let rules = SAST_RULES;
+
+    // Framework-aware: React-specific XSS rules get elevated
+    if (frameworks.some(f => f.includes('react'))) {
+      rules = rules.map(r => {
+        if (r.id === 'SAST-011') {
+          return { ...r, severity: 'HIGH' as const };
+        }
+        return r;
+      });
+    }
+
+    // Express/Node: elevate SQL injection and SSRF detection confidence
+    if (frameworks.some(f => f.includes('express')) || languages.includes('node') || languages.includes('javascript') || languages.includes('typescript')) {
+      rules = rules.map(r => {
+        if (r.category === 'SSRF' || r.id === 'SAST-001' || r.id === 'SAST-002') {
+          return { ...r, confidence: 'HIGH' as const };
+        }
+        return r;
+      });
+    }
+
+    // Python web frameworks (Django/Flask): elevate command injection rules
+    if (frameworks.some(f => f.includes('django') || f.includes('flask'))) {
+      rules = rules.map(r => {
+        if (r.id === 'SAST-021') {
+          return { ...r, severity: 'HIGH' as const, confidence: 'HIGH' as const };
+        }
+        return r;
+      });
+    }
+
+    // Deep scans: add dynamic cross-cutting rules not present in the static table
+    if (context.scanType === 'deep') {
+      dynamicRules.push(
+        {
+          id: 'SAST-DYN-001',
+          name: 'Insecure Deserialization (dynamic)',
+          pattern: /(?:unserialize|pickle\.loads|JSON\.parse\s*\(\s*(?:req\.|buffer|body))/gi,
+          severity: 'HIGH',
+          confidence: 'MEDIUM',
+          category: 'Injection',
+          description: 'Dynamically detected potentially unsafe deserialization of untrusted data.',
+          impact: 'An attacker could craft malicious serialized data to execute arbitrary code.',
+          recommendation: 'Avoid deserializing untrusted data. If necessary, use safe parsing and validate all inputs.',
+          cwe: 'CWE-502',
+          languages: ['JavaScript', 'TypeScript', 'Python', 'PHP', 'Java'],
+        },
+        {
+          id: 'SAST-DYN-002',
+          name: 'Open Redirect (dynamic)',
+          pattern: /res\.redirect\s*\(\s*(?!['"`])[^)]+/gi,
+          severity: 'MEDIUM',
+          confidence: 'MEDIUM',
+          category: 'Injection',
+          description: 'Dynamically detected open redirect using a non-constant argument.',
+          impact: 'An attacker could redirect users to malicious sites to steal credentials.',
+          recommendation: 'Validate redirect URLs against a whitelist or use relative paths only.',
+          cwe: 'CWE-601',
+          languages: ['JavaScript', 'TypeScript', 'PHP', 'Python'],
+        },
+        {
+          id: 'SAST-DYN-003',
+          name: 'Template Injection (dynamic)',
+          pattern: /(?:render|render_template|template|compile)\s*\(\s*(?:req\.|params\.|body\.|query\.|\$\{)/gi,
+          severity: 'HIGH',
+          confidence: 'LOW',
+          category: 'Injection',
+          description: 'Dynamically detected possible server-side template injection.',
+          impact: 'An attacker could inject template directives to execute arbitrary code on the server.',
+          recommendation: 'Never pass user input directly to template rendering. Use template autoescaping and strict context separation.',
+          cwe: 'CWE-1336',
+          languages: ['JavaScript', 'TypeScript', 'Python', 'PHP', 'Ruby', 'Java'],
+        }
+      );
+    }
+
+    // Technology-specific: if a known monorepo/framework is detected, add framework-specific rules
+    if (frameworks.some(f => f.includes('vue') || f.includes('angular') || f.includes('svelte'))) {
+      dynamicRules.push({
+        id: 'SAST-DYN-004',
+        name: 'Dangerous HTML Binding (dynamic)',
+        pattern: /(?:v-html\s*=|\[innerHTML\]\s*=|@html\s*=)/gi,
+        severity: 'HIGH',
+        confidence: 'HIGH',
+        category: 'XSS',
+        description: 'Dynamically detected unsafe HTML binding in a frontend framework.',
+        impact: 'Using v-html/[innerHTML]/@html with user input can lead to XSS.',
+        recommendation: 'Use safe interpolation and escape HTML properly. For rich content, use a sanitization library.',
+        cwe: 'CWE-79',
+        languages: ['JavaScript', 'TypeScript'],
+      });
+    }
+
+    // Mobile app: flag insecure storage patterns
+    if (frameworks.some(f => f.includes('react native') || f.includes('flutter') || f.includes('ionic'))) {
+      dynamicRules.push({
+        id: 'SAST-DYN-005',
+        name: 'Insecure Mobile Storage (dynamic)',
+        pattern: /(?:AsyncStorage|SharedPreferences|localStorage)\s*\.\s*(?:setItem|putString|commit)/gi,
+        severity: 'MEDIUM',
+        confidence: 'LOW',
+        category: 'Data Protection',
+        description: 'Dynamically detected potentially insecure storage of data in a mobile context.',
+        impact: 'Sensitive data stored in plain storage can be extracted from a compromised device.',
+        recommendation: 'Use secure storage (Keychain/Keystore) for sensitive data and encrypt at rest.',
+        cwe: 'CWE-922',
+        languages: ['JavaScript', 'TypeScript', 'Java'],
+      });
+    }
+
+    return [...rules, ...dynamicRules];
   }
 
   private isMetadataOrCommentLine(line: string): boolean {

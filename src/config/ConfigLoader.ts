@@ -19,6 +19,7 @@ const LuiConfigSchema = z.object({
     api: z.boolean().optional(),
     docker: z.boolean().optional(),
     cicd: z.boolean().optional(),
+    dynamic_cve: z.boolean().optional(),
   }).optional(),
   ai: z.object({
     enabled: z.boolean().optional(),
@@ -51,6 +52,7 @@ const DEFAULT_CONFIG: LuiConfig = {
     api: true,
     docker: true,
     cicd: true,
+    dynamic_cve: false,
   },
   ai: { enabled: false, provider: 'disabled' },
   privacy: { local_only: true, redact_secrets: true, send_source_to_ai: false },

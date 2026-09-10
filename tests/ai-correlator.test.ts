@@ -11,8 +11,8 @@ const FIXTURES_PATH = path.join(__dirname, 'fixtures', 'vulnerable-node');
 
 describe('Input redaction', () => {
   test('masks known API key formats', () => {
-    const redacted = redactInput('key FAKE_API_KEY_FOR_TESTING_12345 end');
-    expect(redacted).not.toContain('FAKE_API_KEY_FOR_TESTING_12345');
+    const redacted = redactInput('key ghp_fakeTokenForTestingOnly end');
+    expect(redacted).not.toContain('ghp_fakeTokenForTestingOnly');
     expect(redacted).toContain('[REDACTED]');
   });
 

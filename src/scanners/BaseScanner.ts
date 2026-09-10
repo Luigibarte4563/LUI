@@ -1,5 +1,6 @@
 import { Finding } from '../models/Finding';
 import { ProjectProfile } from '../models/ProjectProfile';
+import { AIConfig, PrivacyConfig } from '../ai/types';
 
 export interface ScanContext {
   project: ProjectProfile;
@@ -8,6 +9,8 @@ export interface ScanContext {
   config: Record<string, unknown>;
   fileContents: Map<string, string>;
   url?: string;
+  ai?: AIConfig;
+  privacy?: PrivacyConfig;
 }
 
 export interface Scanner {

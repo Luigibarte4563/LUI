@@ -2,6 +2,7 @@ export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW';
 export type FindingStatus = 'open' | 'suppressed' | 'fixed';
 export type FindingType = 'confirmed' | 'potential' | 'heuristic';
+export type LifecycleStatus = 'new' | 'confirmed' | 'acknowledged' | 'fix_in_progress' | 'fixed' | 'verified' | 'false_positive' | 'accepted_risk';
 
 export interface Finding {
   id: string;
@@ -24,6 +25,26 @@ export interface Finding {
   status: FindingStatus;
   scanner: string;
   timestamp: number;
+  lifecycle?: LifecycleStatus;
+  dataFlowSteps?: DataFlowStep[];
+  sanitizationStatus?: 'NOT_DETECTED' | 'PARTIAL' | 'EFFECTIVE';
+  riskPriority?: 'P0' | 'P1' | 'P2' | 'P3';
+  aiAnalysis?: {
+    validated: boolean;
+    enrichedDescription: string;
+    exploitScenario: string;
+    remediationSteps: string[];
+    falsePositiveReason?: string;
+    provider?: string;
+  };
+}
+
+export interface DataFlowStep {
+  label: string;
+  detail: string;
+  line?: number;
+  file?: string;
+  type: 'source' | 'transform' | 'sink' | 'sanitization' | 'output';
 }
 
 export interface FileLocation {

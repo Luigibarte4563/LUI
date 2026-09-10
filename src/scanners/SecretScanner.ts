@@ -1,6 +1,7 @@
 import { BaseScanner, ScanContext } from './BaseScanner';
 import { Finding, createFinding } from '../models/Finding';
 import { maskSecret, getAllFiles, relativePath } from '../utils/fileUtils';
+import { LLMAnalyzer } from '../ai/LLMAnalyzer';
 
 const SECRET_PATTERNS: Array<{
   pattern: RegExp;
@@ -59,6 +60,12 @@ export class SecretScanner extends BaseScanner {
     const envFiles = this.findEnvFiles(context.rootPath);
     const allFiles = [...new Set([...files, ...envFiles])];
 
+    // Lazy LLM validation when AI is enabled - only for ambiguous matches
+    let contextAnalyzer: LLMAnalyzer | null = null;
+    if (context.ai?.enabled && context.ai.provider && context.ai.provider !== 'disabled') {
+      contextAnalyzer = new LLMAnalyzer(context.ai, context.privacy || {});
+    }
+
     for (const filePath of allFiles) {
       if (SKIP_PATTERNS.some(skip => filePath.includes(skip))) continue;
       
@@ -79,16 +86,26 @@ export class SecretScanner extends BaseScanner {
             if (this.isFalsePositive(matched, line, filePath)) continue;
             // Skip IP addresses in comments or common internal patterns
             if (secretPattern.name === 'IP Address' && this.isCommonIP(matched)) continue;
+
+            // Dynamic context-aware validation: use LLM when enabled for ambiguous secrets
+            if (contextAnalyzer && this.needsContextValidation(secretPattern.name, line)) {
+              const validation = await contextAnalyzer.validateSecret(matched, line, filePath);
+              if (!validation.isReal) {
+                // Skip real-looking but false-positively identified secrets
+                if (secretPattern.severity !== 'CRITICAL') continue;
+              }
+            }
             
             this.findingCounter++;
             const relPath = relativePath(filePath, context.rootPath);
+            const confidence = this.getConfidence(secretPattern.name, line, content, i);
             findings.push(createFinding({
               id: `LUI-SEC-${String(this.findingCounter).padStart(3, '0')}`,
               title: `Potential secret: ${secretPattern.name}`,
               severity: secretPattern.severity,
-              confidence: this.getConfidence(secretPattern.name, line),
+              confidence,
               category: 'Secrets',
-              type: 'potential',
+              type: confidence === 'HIGH' ? 'confirmed' : 'potential',
               description: `A potential ${secretPattern.name} was detected in the source code.`,
               impact: 'Exposed credentials could allow unauthorized access to services, databases, or infrastructure.',
               affectedFiles: [{ file: relPath, line: i + 1, snippet: this.maskLine(line.trim()) }],
@@ -132,7 +149,21 @@ export class SecretScanner extends BaseScanner {
     if (line.includes('// example') || line.includes('# example') || line.includes('TODO') || line.includes('FIXME')) return true;
     // Skip obviously short or non-random strings
     if (matched.length < 8) return true;
+    // Skip strings that look like simple words/labels rather than credentials
+    if (/^["']?[a-zA-Z]{1,3}["']?$/.test(matched)) return true;
+    // Skip known environment variable references (not literal values)
+    if (/^\$\{[A-Z0-9_]+\}$/.test(matched) || /^ENV\[/.test(matched) || /^env\./.test(matched)) return true;
+    // Skip variable names being declared (not assignments)
+    if (/(?:const|let|var)\s+(?:password|secret|token|key)\s*[,=;)]/.test(line)) return true;
     return false;
+  }
+
+  private needsContextValidation(name: string, line: string): boolean {
+    // Only validate ambiguous detections - high-confidence providers skip LLM
+    const unambiguous = ['AWS Access Key', 'AWS Secret Key', 'Private Key', 'GitHub Token', 'Stripe API Key', 'Slack Token', 'SendGrid API Key'];
+    if (unambiguous.includes(name)) return false;
+    // Validate when the line mixes secret-like data with code signals
+    return line.includes('=') || line.includes(':') || line.includes('process.env') || line.includes('os.environ');
   }
 
   private isCommonIP(ip: string): boolean {
@@ -146,10 +177,43 @@ export class SecretScanner extends BaseScanner {
     });
   }
 
-  private getConfidence(name: string, line: string): 'HIGH' | 'MEDIUM' | 'LOW' {
+  private getConfidence(name: string, line: string, content?: string, lineIndex?: number): 'HIGH' | 'MEDIUM' | 'LOW' {
+    // Static high-confidence providers
     const highConfidence = ['AWS Access Key', 'AWS Secret Key', 'Private Key', 'GitHub Token', 'Stripe API Key', 'Slack Token', 'SendGrid API Key'];
     if (highConfidence.includes(name)) return 'HIGH';
-    if (line.includes('process.env') || line.includes('os.environ') || line.includes('getenv')) return 'MEDIUM';
+
+    // Environment variables are typically configuration, not hardcoded secrets
+    if (line.includes('process.env') || line.includes('os.environ') || line.includes('getenv')) {
+      return 'MEDIUM';
+    }
+
+    // Check surrounding context for dynamic adjustment
+    if (content && lineIndex !== undefined) {
+      const windowStart = Math.max(0, lineIndex - 5);
+      const windowEnd = Math.min(content.split('\n').length, lineIndex + 5);
+      const contextLines = content.split('\n').slice(windowStart, windowEnd).join('\n').toLowerCase();
+
+      // Nearby sanitization or secure handling lowers confidence
+      if (contextLines.includes('redact') || contextLines.includes('mask') || contextLines.includes('encrypt')) {
+        return 'LOW';
+      }
+
+      // In secure config (env.example, gitignore'd) lower confidence
+      if (contextLines.includes('example') || contextLines.includes('sample') || contextLines.includes('template')) {
+        return 'LOW';
+      }
+
+      // Real usage context raises confidence
+      if (contextLines.includes('http') || contextLines.includes('request') || contextLines.includes('api') || contextLines.includes('client')) {
+        return 'HIGH';
+      }
+    }
+
+    // Test data heuristic
+    if (line.includes('test') || line.includes('mock') || line.includes('fixture') || line.includes('fake')) {
+      return 'LOW';
+    }
+
     return 'MEDIUM';
   }
 }

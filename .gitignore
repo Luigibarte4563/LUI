@@ -9,6 +9,7 @@ dist/
 lui-report.html
 SECURITY-REPORT.md
 lui-report.json
+.lui-cache/
 
 # Env / secrets
 .env

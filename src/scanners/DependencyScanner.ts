@@ -3,7 +3,8 @@ import * as path from 'path';
 import { BaseScanner, ScanContext } from './BaseScanner';
 import { Finding, createFinding } from '../models/Finding';
 import { fileExists, relativePath } from '../utils/fileUtils';
-import { findVulnerabilities, isVersionAffected } from '../knowledge/vulnerabilityDatabase';
+import { findVulnerabilities, isVersionAffected, KnownVulnerability } from '../knowledge/vulnerabilityDatabase';
+import { NVDFetcher } from '../knowledge/NVDFetcher';
 
 interface PackageInfo {
   name: string;
@@ -19,6 +20,8 @@ const OUTDATED_THRESHOLDS: Record<string, number> = {
 
 export class DependencyScanner extends BaseScanner {
   private findingCounter = 0;
+  private nvdFetcher: NVDFetcher | null = null;
+  private nvdCache: Map<string, KnownVulnerability[]> = new Map();
 
   constructor() {
     super('Dependency Scanner', 'dependencies', 'Analyzes dependencies for vulnerabilities and issues');
@@ -27,28 +30,59 @@ export class DependencyScanner extends BaseScanner {
   async scan(context: ScanContext): Promise<Finding[]> {
     const findings: Finding[] = [];
 
+    // Real-time NVD CVE fetching (opt-in) - makes dependency scanning dynamic
+    const dynamicCveEnabled = context.config.dynamic_cve === true;
+    if (dynamicCveEnabled) {
+      this.nvdFetcher = new NVDFetcher(context.rootPath);
+    }
+
     // Node.js dependencies
     const pkgJsonPath = path.join(context.rootPath, 'package.json');
     if (fileExists(pkgJsonPath)) {
-      findings.push(...this.scanPackageJson(context, pkgJsonPath));
+      findings.push(...await this.scanPackageJson(context, pkgJsonPath));
     }
 
     // PHP dependencies
     const composerPath = path.join(context.rootPath, 'composer.json');
     if (fileExists(composerPath)) {
-      findings.push(...this.scanComposerJson(context, composerPath));
+      findings.push(...await this.scanComposerJson(context, composerPath));
     }
 
     // Python dependencies
     const reqPath = path.join(context.rootPath, 'requirements.txt');
     if (fileExists(reqPath)) {
-      findings.push(...this.scanRequirementsTxt(context, reqPath));
+      findings.push(...await this.scanRequirementsTxt(context, reqPath));
     }
 
     return findings;
   }
 
-  private scanPackageJson(context: ScanContext, pkgPath: string): Finding[] {
+  private async findAllVulnerabilities(name: string, version: string): Promise<KnownVulnerability[]> {
+    // First check local database
+    const localVulns = findVulnerabilities(name, version);
+    if (localVulns.length > 0) return localVulns;
+
+    // Check NVD cache
+    const cacheKey = `${name}@${version}`;
+    if (this.nvdCache.has(cacheKey)) {
+      return this.nvdCache.get(cacheKey)!;
+    }
+
+    // Fetch from NVD API (dynamic)
+    if (this.nvdFetcher) {
+      try {
+        const nvdVulns = await this.nvdFetcher.fetchVulnerabilities(name, version);
+        this.nvdCache.set(cacheKey, nvdVulns);
+        return nvdVulns;
+      } catch {
+        // NVD fetch failed, return empty
+      }
+    }
+
+    return [];
+  }
+
+  private async scanPackageJson(context: ScanContext, pkgPath: string): Promise<Finding[]> {
     const findings: Finding[] = [];
     try {
       const content = fs.readFileSync(pkgPath, 'utf-8');
@@ -61,8 +95,9 @@ export class DependencyScanner extends BaseScanner {
       for (const [name, version] of Object.entries(allDeps)) {
         const ver = (version as string).replace(/^[\^~>=<]*/, '');
         
-        // Check known vulnerabilities
-        for (const vuln of findVulnerabilities(name, ver)) {
+        // Check known vulnerabilities (local + NVD)
+        const vulns = await this.findAllVulnerabilities(name, ver);
+        for (const vuln of vulns) {
           if (isVersionAffected(ver, vuln.versions)) {
               this.findingCounter++;
               findings.push(createFinding({
@@ -147,7 +182,7 @@ export class DependencyScanner extends BaseScanner {
     return findings;
   }
 
-  private scanComposerJson(context: ScanContext, composerPath: string): Finding[] {
+  private async scanComposerJson(context: ScanContext, composerPath: string): Promise<Finding[]> {
     const findings: Finding[] = [];
     try {
       const content = fs.readFileSync(composerPath, 'utf-8');
@@ -157,7 +192,8 @@ export class DependencyScanner extends BaseScanner {
 
       for (const [name, version] of Object.entries(deps)) {
         const ver = (version as string).replace(/^[\^~>=<]*/, '');
-        for (const vuln of findVulnerabilities(name, ver)) {
+        const vulns = await this.findAllVulnerabilities(name, ver);
+        for (const vuln of vulns) {
           if (vuln.package === name && isVersionAffected(ver, vuln.versions)) {
             this.findingCounter++;
             findings.push(createFinding({
@@ -185,7 +221,7 @@ export class DependencyScanner extends BaseScanner {
     return findings;
   }
 
-  private scanRequirementsTxt(context: ScanContext, reqPath: string): Finding[] {
+  private async scanRequirementsTxt(context: ScanContext, reqPath: string): Promise<Finding[]> {
     const findings: Finding[] = [];
     try {
       const content = fs.readFileSync(reqPath, 'utf-8');
@@ -196,7 +232,8 @@ export class DependencyScanner extends BaseScanner {
         const match = line.match(/^([a-zA-Z0-9_-]+)\s*[=><]+\s*([0-9.]+)/);
         if (match) {
           const [, name, ver] = match;
-          for (const vuln of findVulnerabilities(name, ver)) {
+          const vulns = await this.findAllVulnerabilities(name, ver);
+          for (const vuln of vulns) {
             if (vuln.package.toLowerCase() === name.toLowerCase() && isVersionAffected(ver, vuln.versions)) {
               this.findingCounter++;
               findings.push(createFinding({
