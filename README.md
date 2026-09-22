@@ -26,7 +26,7 @@ Dynamic adaptation layer (context-aware)
 │   ├── Express/Node detected → elevate SQLi + SSRF confidence
 │   ├── Django/Flask detected → elevate command injection rules
 │   ├── Vue/Angular/Svelte detected → add dangerous HTML binding rules
-│   └── Mobile detected → add insecure storage rules
+│   └── Mobile detected → add insecure storage rules 
 ├── Deep-scan dynamic rules
 │   ├── SAST-DYN-001  Insecure deserialization
 │   ├── SAST-DYN-002  Open redirect
